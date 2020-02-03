@@ -47,21 +47,26 @@ def naiveSoftmaxLossAndGradient(
     gradOutsideVecs -- the gradient with respect to all the outside word vectors
                     (dJ / dU)
     """
-    #print(outsideVectors.shape,centerWordVec.shape)
  
     tmp=softmax( np.dot(outsideVectors,centerWordVec) )
     loss=-np.log( tmp )[outsideWordIdx]
     gradCenterVec = np.zeros(centerWordVec.shape) ##For encterWordVectors,only the gradient wrt to the centerword is nonzero.
     gradOutsideVecs = np.zeros(outsideVectors.shape)
-    nvocab=outsideVectors.shape[0]
-    for idx in range(nvocab):
-        gradCenterVec += outsideVectors[idx,:]*tmp[idx]
-        gradOutsideVecs[idx,:]=centerWordVec*tmp[idx]
-        if idx==outsideWordIdx:
-           gradOutsideVecs[idx,:] -= centerWordVec
-    gradCenterVec -= outsideVectors[outsideWordIdx]
-#    gradCenterVec=-outsideVectors[outsideWordIdx]+sum([outsideVectors[idx,:]*tmp[idx]for idx in range(outsideVectors.shape[0])])
+    
+    ##commented out the nonvectorized implemenation for calculating gradCenterVec and gradOutsideVecs
+#    nvocab=outsideVectors.shape[0]
+#    for idx in range(nvocab):
+#        gradCenterVec += outsideVectors[idx,:]*tmp[idx]
+#        gradOutsideVecs[idx,:]=centerWordVec*tmp[idx]
+#        if idx==outsideWordIdx:
+#           gradOutsideVecs[idx,:] -= centerWordVec
+#    gradCenterVec -= outsideVectors[outsideWordIdx]
 
+    ##vectorized implementation
+    gradCenterVec=np.dot(tmp,outsideVectors)
+    gradCenterVec -= outsideVectors[outsideWordIdx]
+    gradOutsideVecs=np.outer(tmp,centerWordVec)
+    gradOutsideVecs[outsideWordIdx,:] -= centerWordVec
 
     ### Please use the provided softmax function (imported earlier in this file)
     ### This numerically stable implementation helps you avoid issues pertaining
@@ -109,26 +114,42 @@ def negSamplingLossAndGradient(
     negSampleWordIndices = getNegativeSamples(outsideWordIdx, dataset, K)
     indices = [outsideWordIdx] + negSampleWordIndices
     loss=0.0
-    gradCenterVec = np.zeros(centerWordVec.shape) ##For encterWordVectors,only the gradient wrt to the centerword is nonzero.
+    gradCenterVec = np.zeros(centerWordVec.shape) ##For centerWordVectors,only the gradient wrt to the centerword is nonzero.
     gradOutsideVecs = np.zeros(outsideVectors.shape)
     nvocab=outsideVectors.shape[0]
     y_hat=np.dot(outsideVectors,centerWordVec) 
 
-    for idx in indices:
-        tmp=y_hat[idx]
-        if idx==outsideWordIdx:
-           loss += -np.log(sigmoid(tmp))
-        else:
-           loss += -np.log(sigmoid(-tmp))
+    ##commented out the nonvectorized implemenation for calculating loss,gradCenterVec and gradOutsideVecs
+#    for idx in indices:
+#        tmp=y_hat[idx]
+#        if idx==outsideWordIdx:
+#           loss += -np.log(sigmoid(tmp))
+#        else:
+#           loss += -np.log(sigmoid(-tmp))
 
-#    print(outsideWordIdx,negSampleWordIndices)
-    for idx in indices:
-           if idx==outsideWordIdx:
-              gradCenterVec += -(1.0-sigmoid(y_hat[idx]) )*outsideVectors[idx,:]
-              gradOutsideVecs[idx,:] += - (1.0-sigmoid(y_hat[idx]) )*centerWordVec
-           else:
-              gradCenterVec += (1.0-sigmoid(-y_hat[idx]) )*outsideVectors[idx,:]
-              gradOutsideVecs[idx,:] += (1.0-sigmoid(-y_hat[idx]) )*centerWordVec
+#    for idx in indices:
+#           if idx==outsideWordIdx:
+#              gradCenterVec += -sigmoid(-y_hat[idx]) *outsideVectors[idx,:]
+#              gradOutsideVecs[idx,:] += - sigmoid(-y_hat[idx]) *centerWordVec
+#           else:
+#              gradCenterVec += sigmoid(y_hat[idx]) *outsideVectors[idx,:]
+#              gradOutsideVecs[idx,:] += sigmoid(y_hat[idx]) *centerWordVec
+    ##vectorized implementation
+    z=y_hat[negSampleWordIndices]
+    loss=sum( -np.log(sigmoid(-z)))
+    loss+= -np.log(sigmoid(y_hat[outsideWordIdx]))
+    gradCenterVec=np.dot(sigmoid(z),outsideVectors[negSampleWordIndices,:])
+    gradCenterVec += -sigmoid(-y_hat[outsideWordIdx])*outsideVectors[outsideWordIdx,:]
+    
+    u_k = outsideVectors[negSampleWordIndices]
+    z = sigmoid(np.dot(u_k,centerWordVec))
+    tmp=np.zeros(outsideVectors.shape)
+#    print((tmp[negSampleWordIndices]).shape,(np.outer(z,centerWordVec)).shape)
+    tmp[negSampleWordIndices] += np.outer(z,centerWordVec)
+#    gradOutsideVecs[negSampleWordIndices]+=tmp[negSampleWordIndices]
+    for idx in negSampleWordIndices:
+        gradOutsideVecs[idx]+=tmp[idx] 
+    gradOutsideVecs[outsideWordIdx] += - sigmoid(-y_hat[outsideWordIdx]) *centerWordVec
 
     return loss, gradCenterVec, gradOutsideVecs
 
@@ -168,7 +189,7 @@ def skipgram(currentCenterWord, windowSize, outsideWords, word2Ind,
     gradCenterVecs = np.zeros(centerWordVectors.shape)
     gradOutsideVectors = np.zeros(outsideVectors.shape)
     centerWordVec=centerWordVectors[word2Ind[currentCenterWord],:]
- #   print(currentCenterWord,windowSize,len(outsideWords)/2)
+
     for out in outsideWords:
         outsideWordIdx=word2Ind[out]
         loss_i, gradCenterVec_i, gradOutsideVecs_i = word2vecLossAndGradient(centerWordVec,outsideWordIdx,outsideVectors,dataset)
@@ -192,9 +213,7 @@ def word2vec_sgd_wrapper(word2vecModel, word2Ind, wordVectors, dataset,
     outsideVectors = wordVectors[int(N/2):,:]
     for i in range(batchsize):
         windowSize1 = random.randint(1, windowSize)
-        ##windowSize1=windowSize
         centerWord, context = dataset.getRandomContext(windowSize1)
-        #print(i,centerWord,context)
 
         c, gin, gout = word2vecModel(
             centerWord, windowSize1, context, word2Ind, centerWordVectors,
